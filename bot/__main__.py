@@ -10,7 +10,7 @@ from aiogram.types import BotCommand, CallbackQuery, Message, TelegramObject
 
 from .config import load_config
 from .db import Database
-from .handlers import menu, workout
+from .handlers import menu, survey, workout
 from .media import ensure_media
 from .runtime import Runtime
 
@@ -54,10 +54,11 @@ async def main() -> None:
     access = AccessMiddleware(config.allowed_users)
     dp.message.outer_middleware(access)
     dp.callback_query.outer_middleware(access)
-    dp.include_routers(workout.router, menu.router)
+    dp.include_routers(survey.router, workout.router, menu.router)
 
     await bot.set_my_commands([
         BotCommand(command="start", description="Главное меню"),
+        BotCommand(command="survey", description="Подобрать программу (анкета)"),
         BotCommand(command="finish", description="Завершить тренировку"),
         BotCommand(command="id", description="Мой Telegram ID"),
     ])

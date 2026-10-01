@@ -38,12 +38,21 @@ class ProgCb(CallbackData, prefix="prog"):
 
 
 class MenuCb(CallbackData, prefix="m"):
-    action: str  # programs | lifts | lift | scale | rest
+    action: str  # programs | lifts | lift | scale | rest | survey | nutrition | bodyweight
     key: str = ""
 
 
 class HistCb(CallbackData, prefix="hist"):
     key: str
+
+
+class SurveyCb(CallbackData, prefix="sv"):
+    field: str
+    value: str
+
+
+class WeightPickCb(CallbackData, prefix="wp"):
+    centi: int  # weight * 100, callback data must be compact
 
 
 def main_menu() -> ReplyKeyboardMarkup:
@@ -119,19 +128,61 @@ def start_keyboard(day_idx: int, other_idx: int, other_name: str) -> InlineKeybo
 
 def programs_keyboard(current: str | None) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
+    kb.button(text="🧩 Подобрать под меня (анкета)", callback_data=MenuCb(action="survey"))
     for p in PROGRAMS.values():
         kb.button(text=("✅ " if p.key == current else "") + p.name, callback_data=ProgCb(key=p.key))
     kb.adjust(1)
     return kb.as_markup()
 
 
-def program_menu() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="⚖️ Изменить рабочий вес", callback_data=MenuCb(action="lifts").pack())],
-            [InlineKeyboardButton(text="🔁 Сменить программу", callback_data=MenuCb(action="programs").pack())],
-        ]
-    )
+def program_menu(has_profile: bool) -> InlineKeyboardMarkup:
+    rows = [
+        [InlineKeyboardButton(text="⚖️ Изменить рабочий вес", callback_data=MenuCb(action="lifts").pack())],
+        [InlineKeyboardButton(text="🧩 Пройти анкету заново", callback_data=MenuCb(action="survey").pack())],
+        [InlineKeyboardButton(text="🔁 Готовые программы", callback_data=MenuCb(action="programs").pack())],
+    ]
+    if has_profile:
+        rows.insert(1, [InlineKeyboardButton(text="🍽 Питание", callback_data=MenuCb(action="nutrition").pack())])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def weight_pick(weight: float, label: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=f"Взять {label}", callback_data=WeightPickCb(centi=round(weight * 100)).pack())
+    ]])
+
+
+def choice_keyboard(field: str, options: list[tuple[str, str]], columns: int = 1) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    for value, label in options:
+        kb.button(text=label, callback_data=SurveyCb(field=field, value=value))
+    kb.adjust(columns)
+    return kb.as_markup()
+
+
+def restrictions_keyboard(options: dict[str, str], selected: list[str]) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    for value, label in options.items():
+        kb.button(text=("✅ " if value in selected else "▫️ ") + label, callback_data=SurveyCb(field="restr", value=value))
+    kb.button(text="Готово →" if selected else "Ничего не беспокоит →", callback_data=SurveyCb(field="restr", value="done"))
+    kb.adjust(1)
+    return kb.as_markup()
+
+
+def survey_confirm() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Тренироваться по этой программе", callback_data=SurveyCb(field="confirm", value="yes").pack())],
+        [InlineKeyboardButton(text="🔁 Пройти анкету заново", callback_data=MenuCb(action="survey").pack())],
+    ])
+
+
+def progress_keyboard(ex_keys: list[str]) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="⚖️ Записать вес тела", callback_data=MenuCb(action="bodyweight"))
+    for key in ex_keys:
+        kb.button(text=EXERCISES[key].name, callback_data=HistCb(key=key))
+    kb.adjust(1, 2)
+    return kb.as_markup()
 
 
 def lifts_keyboard(ex_keys: list[str]) -> InlineKeyboardMarkup:
@@ -139,14 +190,6 @@ def lifts_keyboard(ex_keys: list[str]) -> InlineKeyboardMarkup:
     for key in ex_keys:
         kb.button(text=EXERCISES[key].name, callback_data=MenuCb(action="lift", key=key))
     kb.adjust(1)
-    return kb.as_markup()
-
-
-def history_keyboard(ex_keys: list[str]) -> InlineKeyboardMarkup:
-    kb = InlineKeyboardBuilder()
-    for key in ex_keys:
-        kb.button(text=EXERCISES[key].name, callback_data=HistCb(key=key))
-    kb.adjust(2)
     return kb.as_markup()
 
 

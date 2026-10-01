@@ -1,4 +1,4 @@
-"""Start, program choice, progress, settings."""
+"""Start, program choice, progress, nutrition, settings."""
 
 import time
 from html import escape
@@ -9,11 +9,12 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from .. import keyboards as kb
-from .. import texts
+from .. import nutrition, planner, service, texts
 from ..catalog import EXERCISES, PROGRAMS
 from ..config import Config
 from ..db import Database
-from .workout import ask_weight
+from .survey import start_survey
+from .workout import ask_bodyweight, ask_weight
 
 router = Router()
 
@@ -27,11 +28,15 @@ async def cmd_start(message: Message, db: Database, state: FSMContext):
     if not user.program:
         await message.answer(
             f"Привет, {escape(user.name)}! 👋\n\n"
-            "Я веду тренировки: показываю упражнения с техникой, считаю подходы, держу отдых "
-            "и сам решаю, какой вес ставить в следующий раз.\n\nВыбери программу:",
+            "Я веду тренировки: подбираю программу под твою цель, показываю упражнения с техникой, "
+            "считаю подходы, держу отдых и сам решаю, какой вес ставить в следующий раз.",
             reply_markup=kb.main_menu(),
         )
-        await message.answer(_programs_text(), reply_markup=kb.programs_keyboard(None))
+        await message.answer(
+            "Лучше всего начать с короткой анкеты — по ней я соберу программу, стартовые веса и ориентир "
+            "по питанию. Или выбери готовую программу:\n\n" + _programs_text(),
+            reply_markup=kb.programs_keyboard(None),
+        )
         return
     await message.answer("С возвращением! Жми «🏋️ Тренировка», когда будешь в зале.", reply_markup=kb.main_menu())
 
@@ -72,17 +77,19 @@ async def on_program(cb: CallbackQuery, callback_data: kb.ProgCb, db: Database):
 async def program_menu(message: Message, db: Database, state: FSMContext):
     await state.clear()
     user = await db.get_user(message.from_user.id)
-    if not user or not user.program:
+    program = await service.get_program(db, user) if user else None
+    if program is None:
         await message.answer(_programs_text(), reply_markup=kb.programs_keyboard(None))
         return
-    program = PROGRAMS[user.program]
     lifts = await db.all_lifts(user.user_id)
+    profile = planner.Profile.from_dict(user.profile) if user.profile else None
+    suggest = (lambda ex: planner.start_weight(ex, profile)) if profile else None
     parts = [f"<b>{escape(program.name)}</b>\n{escape(program.description)}"]
     for i in range(len(program.days)):
-        parts.append(texts.day_preview(user.program, i, lifts, with_program=False))
+        parts.append(texts.day_preview(program, i, lifts, with_program=False, suggest=suggest))
     nxt = program.days[user.day_idx % len(program.days)].name
     parts.append(f"Следующая по плану: <b>{escape(nxt)}</b>")
-    await message.answer("\n\n".join(parts), reply_markup=kb.program_menu())
+    await message.answer("\n\n".join(parts), reply_markup=kb.program_menu(profile is not None))
 
 
 @router.callback_query(kb.MenuCb.filter(F.action == "programs"))
@@ -95,42 +102,62 @@ async def on_programs(cb: CallbackQuery, db: Database):
 @router.callback_query(kb.MenuCb.filter(F.action == "lifts"))
 async def on_lifts(cb: CallbackQuery, db: Database):
     user = await db.get_user(cb.from_user.id)
+    program = await service.get_program(db, user) if user else None
     keys: list[str] = []
-    if user and user.program:
-        for day in PROGRAMS[user.program].days:
+    if program:
+        for day in program.days:
             for it in day.items:
-                for k in (it.ex, *EXERCISES[it.ex].alternatives):
-                    if k not in keys:
-                        keys.append(k)
+                if it.ex not in keys and not EXERCISES[it.ex].reps_only:
+                    keys.append(it.ex)
     await cb.answer()
     await cb.message.answer("Для какого упражнения поменять рабочий вес?", reply_markup=kb.lifts_keyboard(keys))
 
 
 @router.callback_query(kb.MenuCb.filter(F.action == "lift"))
-async def on_lift(cb: CallbackQuery, callback_data: kb.MenuCb, state: FSMContext, bot: Bot):
+async def on_lift(cb: CallbackQuery, callback_data: kb.MenuCb, db: Database, state: FSMContext, bot: Bot):
     await cb.answer()
-    await ask_weight(bot, cb.message.chat.id, state, callback_data.key, target="lift")
+    await ask_weight(bot, cb.message.chat.id, cb.from_user.id, db, state, callback_data.key, target="lift")
+
+
+@router.callback_query(kb.MenuCb.filter(F.action == "nutrition"))
+async def on_nutrition(cb: CallbackQuery, db: Database):
+    user = await db.get_user(cb.from_user.id)
+    await cb.answer()
+    if not user or not user.profile:
+        await cb.message.answer("Для расчёта питания пройди анкету: /survey")
+        return
+    profile = planner.Profile.from_dict(user.profile)
+    await cb.message.answer(texts.nutrition_text(nutrition.calculate(profile), nutrition.advice(profile)))
 
 
 # --- progress ---
 
 
 @router.message(F.text == kb.BTN_PROGRESS)
-async def progress(message: Message, db: Database, state: FSMContext):
+async def progress(message: Message, db: Database, config: Config, state: FSMContext):
     await state.clear()
     user_id = message.from_user.id
     total, month = await db.workout_stats(user_id, int(time.time()) - 30 * 86400)
     exercises = await db.trained_exercises(user_id)
-    if not exercises:
-        await message.answer("Пока нет завершённых тренировок. Самое время начать 💪")
-        return
     lifts = await db.all_lifts(user_id)
-    lines = [f"📈 Тренировок всего: <b>{total}</b>, за 30 дней: <b>{month}</b>", "", "Текущие рабочие веса:"]
-    for key in exercises:
-        ex = EXERCISES[key]
-        lines.append(f"• {escape(ex.name)}: {texts.weight_text(lifts.get(key), ex)}")
-    lines += ["", "Выбери упражнение, чтобы посмотреть историю:"]
-    await message.answer("\n".join(lines), reply_markup=kb.history_keyboard(exercises))
+    lines = [f"📈 Тренировок всего: <b>{total}</b>, за 30 дней: <b>{month}</b>", ""]
+    lines.append(texts.bodyweight_text(await db.bodyweights(user_id), config.tz))
+    if exercises:
+        lines += ["", "Текущие рабочие веса:"]
+        for key in exercises:
+            ex = EXERCISES[key]
+            weight = 0.0 if ex.reps_only else lifts.get(key)
+            lines.append(f"• {escape(ex.name)}: {texts.weight_text(weight, ex)}")
+        lines += ["", "Выбери упражнение, чтобы посмотреть историю:"]
+    else:
+        lines += ["", "Завершённых тренировок пока нет — самое время начать 💪"]
+    await message.answer("\n".join(lines), reply_markup=kb.progress_keyboard(exercises))
+
+
+@router.callback_query(kb.MenuCb.filter(F.action == "bodyweight"))
+async def on_bodyweight(cb: CallbackQuery, state: FSMContext, bot: Bot):
+    await cb.answer()
+    await ask_bodyweight(bot, cb.message.chat.id, state)
 
 
 @router.callback_query(kb.HistCb.filter())
@@ -138,8 +165,9 @@ async def on_history(cb: CallbackQuery, callback_data: kb.HistCb, db: Database, 
     ex = EXERCISES[callback_data.key]
     sessions = await db.history(cb.from_user.id, ex.key, limit=10)
     lift = await db.get_lift(cb.from_user.id, ex.key)
+    current = 0.0 if ex.reps_only else (lift[0] if lift else None)
     await cb.answer()
-    await cb.message.answer(texts.history_text(ex, sessions, lift[0] if lift else None, config.tz))
+    await cb.message.answer(texts.history_text(ex, sessions, current, config.tz))
 
 
 # --- settings ---
@@ -150,7 +178,8 @@ def _settings_text() -> str:
         "⚙️ <b>Настройки</b>\n\n"
         "<b>Шаг прибавки</b>: «мелкий» — прибавлять вес вдвое меньшими шагами "
         "(например +2,5 кг вместо +5 в приседе). Удобно, если рост веса идёт тяжело.\n"
-        "<b>Отдых</b>: «по программе» — у тяжёлых базовых упражнений отдых длиннее."
+        "<b>Отдых</b>: «по программе» — у тяжёлых базовых упражнений отдых длиннее.\n\n"
+        "Анкету и программу можно поменять в «📋 Программа»."
     )
 
 

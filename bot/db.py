@@ -1,5 +1,6 @@
 """SQLite storage. Small and boring on purpose: two users, a few thousand rows a year."""
 
+import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -66,7 +67,22 @@ CREATE TABLE IF NOT EXISTS media (
     ex_key  TEXT PRIMARY KEY,
     file_id TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS custom_programs (
+    user_id    INTEGER PRIMARY KEY,
+    data       TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS bodyweight (
+    id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    weight  REAL NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS bodyweight_user ON bodyweight(user_id, created_at);
 """
+
+# columns added after the first release; added to existing databases on start
+MIGRATIONS = [("users", "profile", "TEXT")]
 
 
 @dataclass
@@ -77,6 +93,7 @@ class User:
     day_idx: int
     inc_scale: float
     rest_override: int
+    profile: dict | None
 
 
 @dataclass
@@ -134,6 +151,10 @@ class Database:
         self.conn = await aiosqlite.connect(self.path)
         self.conn.row_factory = aiosqlite.Row
         await self.conn.executescript(SCHEMA)
+        for table, column, decl in MIGRATIONS:
+            cols = {r["name"] for r in await self._all(f"PRAGMA table_info({table})")}
+            if column not in cols:
+                await self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
         await self.conn.commit()
 
     async def close(self) -> None:
@@ -314,6 +335,37 @@ class Database:
         )
         return [r["ex_key"] for r in rows]
 
+    async def save_profile(self, user_id: int, profile: dict) -> None:
+        await self.update_user(user_id, profile=json.dumps(profile, ensure_ascii=False))
+
+    # --- personal programs ---
+
+    async def get_custom_program(self, user_id: int) -> dict | None:
+        row = await self._one("SELECT data FROM custom_programs WHERE user_id = ?", user_id)
+        return json.loads(row["data"]) if row else None
+
+    async def set_custom_program(self, user_id: int, data: dict) -> None:
+        await self._exec(
+            "INSERT INTO custom_programs (user_id, data, created_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, created_at = excluded.created_at",
+            user_id, json.dumps(data, ensure_ascii=False), now(),
+        )
+
+    # --- body weight log ---
+
+    async def add_bodyweight(self, user_id: int, weight: float) -> None:
+        await self._exec(
+            "INSERT INTO bodyweight (user_id, weight, created_at) VALUES (?, ?, ?)", user_id, weight, now()
+        )
+
+    async def bodyweights(self, user_id: int, limit: int = 12) -> list[tuple[int, float]]:
+        """Newest first: [(created_at, weight)]."""
+        rows = await self._all(
+            "SELECT created_at, weight FROM bodyweight WHERE user_id = ? ORDER BY created_at DESC, id DESC LIMIT ?",
+            user_id, limit,
+        )
+        return [(r["created_at"], r["weight"]) for r in rows]
+
     # --- telegram media cache ---
 
     async def get_media(self, ex_key: str) -> str | None:
@@ -335,6 +387,7 @@ def _user(r) -> User:
     return User(
         user_id=r["user_id"], name=r["name"], program=r["program"], day_idx=r["day_idx"],
         inc_scale=r["inc_scale"], rest_override=r["rest_override"],
+        profile=json.loads(r["profile"]) if r["profile"] else None,
     )
 
 

@@ -18,7 +18,7 @@ DELOAD_FACTOR = 0.9
 class Outcome:
     weight: float
     fails: int
-    verdict: str  # up | up2 | hold | fail | deload
+    verdict: str  # up | up2 | hold | fail | deload | top
 
 
 def round_to_step(weight: float, step: float) -> float:
@@ -67,6 +67,15 @@ def next_weight(
         return Outcome(weight, 0, "hold")
 
     raise ValueError(f"unknown rule {rule}")
+
+
+def reps_only(*, reps: list[int], reps_lo: int, reps_hi: int) -> Outcome:
+    """Body-weight exercises without load: progress is more reps, then a harder variation."""
+    if reps and all(r >= reps_hi for r in reps):
+        return Outcome(0.0, 0, "top")
+    if any(r < reps_lo for r in reps):
+        return Outcome(0.0, 0, "fail")
+    return Outcome(0.0, 0, "hold")
 
 
 def scaled_increment(increment: float, step: float, scale: float) -> float:

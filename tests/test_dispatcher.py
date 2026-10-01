@@ -16,7 +16,7 @@ from bot.__main__ import AccessMiddleware
 from bot import keyboards as kb
 from bot.config import Config
 from bot.db import Database
-from bot.handlers import menu, workout
+from bot.handlers import menu, survey, workout
 from bot.runtime import Runtime
 
 UID = 42
@@ -63,7 +63,9 @@ def test_full_conversation(tmp_path, monkeypatch):
         access = AccessMiddleware(config.allowed_users)
         dp.message.outer_middleware(access)
         dp.callback_query.outer_middleware(access)
-        dp.include_routers(workout.router, menu.router)
+        for r in (survey.router, workout.router, menu.router):
+            r._parent_router = None  # routers are module singletons; tests build several dispatchers
+        dp.include_routers(survey.router, workout.router, menu.router)
         upd = itertools.count(1)
 
         async def say(text, user=ME):

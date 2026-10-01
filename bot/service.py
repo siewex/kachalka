@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 
 from . import progression
-from .catalog import EXERCISES, PROGRAMS, Day
+from .catalog import EXERCISES, PROGRAMS, Day, Program, build_program
 from .db import Database, Item, SetRow, User, Workout, now
 
 
@@ -11,8 +11,18 @@ class WorkoutError(Exception):
     pass
 
 
-def day_for(user: User, day_idx: int | None = None) -> tuple[int, Day]:
-    program = PROGRAMS[user.program]
+CUSTOM = "custom"
+
+
+async def get_program(db: Database, user: User) -> Program | None:
+    """The user's current program: a built-in one or their personal one from the questionnaire."""
+    if user.program == CUSTOM:
+        data = await db.get_custom_program(user.user_id)
+        return build_program(data) if data else None
+    return PROGRAMS.get(user.program) if user.program else None
+
+
+def day_for(program: Program, user: User, day_idx: int | None = None) -> tuple[int, Day]:
     idx = (user.day_idx if day_idx is None else day_idx) % len(program.days)
     return idx, program.days[idx]
 
@@ -20,14 +30,21 @@ def day_for(user: User, day_idx: int | None = None) -> tuple[int, Day]:
 async def start_workout(db: Database, user: User, day_idx: int | None = None) -> Workout:
     if await db.active_workout(user.user_id):
         raise WorkoutError("Уже есть активная тренировка")
-    idx, day = day_for(user, day_idx)
+    program = await get_program(db, user)
+    if program is None:
+        raise WorkoutError("Сначала выбери программу")
+    idx, day = day_for(program, user, day_idx)
     items = []
     for it in day.items:
-        lift = await db.get_lift(user.user_id, it.ex)
+        if EXERCISES[it.ex].reps_only:
+            weight = 0.0
+        else:
+            lift = await db.get_lift(user.user_id, it.ex)
+            weight = lift[0] if lift else None
         items.append(
             dict(
                 ex_key=it.ex, sets=it.sets, reps_lo=it.reps_lo, reps_hi=it.reps_hi, amrap=it.amrap,
-                rule=it.rule, rest=user.rest_override or it.rest, weight=lift[0] if lift else None,
+                rule=it.rule, rest=user.rest_override or it.rest, weight=weight,
             )
         )
     wid = await db.create_workout(user.user_id, user.program, day.key, idx, items)
@@ -85,6 +102,10 @@ async def log_set(db: Database, w: Workout, reps: int, expect: tuple[int, int] |
 
 async def _apply_progression(db: Database, user_id: int, item: Item, sets: list[SetRow]) -> progression.Outcome:
     ex = EXERCISES[item.ex_key]
+    if ex.reps_only:
+        outcome = progression.reps_only(reps=[s.reps for s in sets], reps_lo=item.reps_lo, reps_hi=item.reps_hi)
+        await db.update_item(item.workout_id, item.idx, next_weight=0, verdict=outcome.verdict)
+        return outcome
     user = await db.get_user(user_id)
     lift = await db.get_lift(user_id, item.ex_key)
     outcome = progression.next_weight(
@@ -116,9 +137,13 @@ async def swap_exercise(db: Database, w: Workout, new_key: str) -> Item:
         raise WorkoutError("Нет текущего упражнения")
     if new_key not in EXERCISES[item.ex_key].alternatives:
         raise WorkoutError("Эту замену нельзя сделать")
-    lift = await db.get_lift(w.user_id, new_key)
+    if EXERCISES[new_key].reps_only:
+        weight = 0.0
+    else:
+        lift = await db.get_lift(w.user_id, new_key)
+        weight = lift[0] if lift else None
     await db.delete_sets(w.id, item.idx)
-    await db.update_item(w.id, item.idx, ex_key=new_key, weight=lift[0] if lift else None)
+    await db.update_item(w.id, item.idx, ex_key=new_key, weight=weight)
     await db.update_workout(w.id, set_idx=0)
     return (await db.items(w.id))[item.idx]
 

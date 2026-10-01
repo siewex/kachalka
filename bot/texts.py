@@ -6,7 +6,7 @@ from html import escape
 from zoneinfo import ZoneInfo
 
 from . import progression
-from .catalog import EXERCISES, PROGRAMS, Exercise
+from .catalog import EXERCISES, Exercise, Program
 from .db import Item, SetRow
 from .service import Summary
 
@@ -104,6 +104,7 @@ VERDICTS = {
     "hold": "➡️ Держим вес и добираем повторы: {w}",
     "fail": "➡️ Не дотянул до нижней границы — повторим тот же вес: {w}",
     "deload": "🔽 Сбрасываем вес на ~10%, чтобы снова разогнаться: {w}",
+    "top": "🔝 Верх диапазона во всех подходах! Усложняй: медленнее опускание, пауза или вариант потяжелее",
 }
 
 
@@ -122,8 +123,9 @@ def rest_text(seconds_left: int, total: int) -> str:
     return f"⏱ Отдых {m}:{s:02d}\n{bar}"
 
 
-def day_preview(program_key: str, day_idx: int, lifts: dict[str, float], with_program: bool = True) -> str:
-    program = PROGRAMS[program_key]
+def day_preview(program: Program, day_idx: int, lifts: dict[str, float], with_program: bool = True,
+                suggest=None) -> str:
+    """suggest(ex) -> starting weight, shown for exercises without a working weight yet."""
     day = program.days[day_idx]
     header = f"<b>{escape(day.name)}</b>"
     lines = [f"{header} · {escape(program.name)}", ""] if with_program else [header]
@@ -133,7 +135,12 @@ def day_preview(program_key: str, day_idx: int, lifts: dict[str, float], with_pr
             f"{it.sets}×{it.reps_lo}–{it.reps_hi}" if it.reps_lo != it.reps_hi
             else f"{it.sets}×{it.reps_lo}{'+' if it.amrap else ''}"
         )
-        lines.append(f"{i}. {escape(ex.name)} — {scheme} · {weight_text(lifts.get(it.ex), ex)}")
+        weight = 0.0 if ex.reps_only else lifts.get(it.ex)
+        if weight is None and suggest is not None and (s := suggest(ex)) is not None:
+            shown = f"старт ~{weight_text(s, ex)}"
+        else:
+            shown = weight_text(weight, ex)
+        lines.append(f"{i}. {escape(ex.name)} — {scheme} · {shown}")
     return "\n".join(lines)
 
 
@@ -147,14 +154,14 @@ def summary_text(s: Summary) -> str:
         return "Тренировка отменена — ни одного подхода не записано."
     lines = [f"🏁 <b>Тренировка завершена</b> · {duration_text(s.duration)}"]
     if s.tonnage:
-        lines.append(f"Тоннаж: {s.tonnage:,.0f} кг".replace(",", " "))
+        lines.append(f"Тоннаж: {thousands(round(s.tonnage))} кг")
     lines.append("")
     records = []
     for es in s.exercises:
         ex = EXERCISES[es.item.ex_key]
         line = f"• {escape(ex.name)}: {sets_line(es.sets, ex)}"
         if es.item.next_weight is not None:
-            arrow = {"up": "🔼", "up2": "⏫", "deload": "🔽"}.get(es.item.verdict, "➡️")
+            arrow = {"up": "🔼", "up2": "⏫", "deload": "🔽", "top": "🔝"}.get(es.item.verdict, "➡️")
             line += f"\n   {arrow} дальше: {weight_text(es.item.next_weight, ex)}"
         else:
             line += "\n   ⏸ не доделано — вес не меняем"
@@ -184,4 +191,33 @@ def history_text(ex: Exercise, sessions: list[tuple[int, list[SetRow]]], current
         lines.append(line)
     if best:
         lines += ["", f"Лучший расчётный максимум за период: ≈ {num(round(best, 1))} кг"]
+    return "\n".join(lines)
+
+
+def thousands(n: int) -> str:
+    return f"{n:,}".replace(",", " ")
+
+
+def nutrition_text(n, advice: str) -> str:
+    return (
+        "🍽 <b>Питание (ориентир)</b>\n"
+        f"Калории: <b>{thousands(n.calories)} ккал</b> в день\n"
+        f"Белок: <b>{n.protein} г</b> · жиры: <b>{n.fat} г</b> · углеводы: <b>{n.carbs} г</b>\n"
+        f"<i>Поддержание веса ≈ {thousands(n.maintenance)} ккал, ИМТ {num(n.bmi)}</i>\n\n"
+        f"{escape(advice)}\n\n"
+        "<i>Расчёт по формуле Миффлина–Сан Жеора. Это ориентир, а не медицинская рекомендация.</i>"
+    )
+
+
+def bodyweight_text(entries: list[tuple[int, float]], tz: str) -> str:
+    if not entries:
+        return "⚖️ Вес тела пока не записан."
+    latest = entries[0][1]
+    lines = [f"⚖️ Вес тела: <b>{num(latest)} кг</b>"]
+    if len(entries) > 1:
+        first_ts, first = entries[-1]
+        delta = latest - first
+        sign = "+" if delta > 0 else ""
+        lines.append(f"Изменение с {fmt_date(first_ts, tz)}: {sign}{num(round(delta, 1))} кг")
+    lines.append(" · ".join(f"{fmt_date(ts, tz)} {num(w)}" for ts, w in entries[:6]))
     return "\n".join(lines)
