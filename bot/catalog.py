@@ -1,10 +1,9 @@
-"""Exercise and program catalog loaded from bot/data/*.json."""
+"""Exercise and program catalog, built from bot/content/*.py."""
 
-import json
 from dataclasses import dataclass
-from pathlib import Path
 
-DATA_DIR = Path(__file__).parent / "data"
+from .content.exercises import EXERCISES_DATA
+from .content.programs import PROGRAMS_DATA
 
 
 @dataclass(frozen=True)
@@ -49,9 +48,8 @@ class Program:
 
 
 def _load_exercises() -> dict[str, Exercise]:
-    raw = json.loads((DATA_DIR / "exercises.json").read_text(encoding="utf-8"))
     result = {}
-    for e in raw:
+    for e in EXERCISES_DATA:
         result[e["key"]] = Exercise(
             key=e["key"],
             name=e["name"],
@@ -69,9 +67,8 @@ def _load_exercises() -> dict[str, Exercise]:
 
 
 def _load_programs(exercises: dict[str, Exercise]) -> dict[str, Program]:
-    raw = json.loads((DATA_DIR / "programs.json").read_text(encoding="utf-8"))
     result = {}
-    for p in raw:
+    for p in PROGRAMS_DATA:
         days = []
         for d in p["days"]:
             items = []
