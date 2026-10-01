@@ -1,0 +1,59 @@
+[
+  {
+    "key": "bbr",
+    "name": "Basic Beginner Routine",
+    "description": "Классика для новичков с r/Fitness. 3 дня в неделю, чередуются тренировки A и B. В каждом упражнении 2×5 и последний подход на максимум. Сделал всё — вес растёт каждую тренировку, не сделал — минус 10%. Рассчитана на 2–3 месяца.",
+    "rest": 120,
+    "days": [
+      {
+        "key": "A",
+        "name": "Тренировка A",
+        "items": [
+          {"ex": "barbell_row", "sets": 3, "reps": 5, "amrap": true, "rule": "linear"},
+          {"ex": "bench_press", "sets": 3, "reps": 5, "amrap": true, "rule": "linear"},
+          {"ex": "squat", "sets": 3, "reps": 5, "amrap": true, "rule": "linear", "rest": 180}
+        ]
+      },
+      {
+        "key": "B",
+        "name": "Тренировка B",
+        "items": [
+          {"ex": "chin_up", "sets": 3, "reps": 5, "amrap": true, "rule": "linear"},
+          {"ex": "ohp", "sets": 3, "reps": 5, "amrap": true, "rule": "linear"},
+          {"ex": "deadlift", "sets": 3, "reps": 5, "amrap": true, "rule": "linear", "rest": 180}
+        ]
+      }
+    ]
+  },
+  {
+    "key": "fullbody",
+    "name": "Фулбади A/B (двойная прогрессия)",
+    "description": "Всё тело за тренировку, 3 раза в неделю, A и B чередуются. Работа в диапазоне повторений: когда во всех подходах сделан верх диапазона, вес растёт. Больше объёма и акцент на ягодицы — хорошо подходит и для массы, и для тонуса.",
+    "rest": 90,
+    "days": [
+      {
+        "key": "A",
+        "name": "Тренировка A",
+        "items": [
+          {"ex": "squat", "sets": 3, "reps": [6, 10], "rule": "double", "rest": 150},
+          {"ex": "bench_press", "sets": 3, "reps": [6, 10], "rule": "double", "rest": 150},
+          {"ex": "lat_pulldown", "sets": 3, "reps": [8, 12], "rule": "double"},
+          {"ex": "glute_bridge", "sets": 3, "reps": [8, 12], "rule": "double"},
+          {"ex": "lateral_raise", "sets": 3, "reps": [12, 15], "rule": "double", "rest": 60}
+        ]
+      },
+      {
+        "key": "B",
+        "name": "Тренировка B",
+        "items": [
+          {"ex": "rdl", "sets": 3, "reps": [8, 12], "rule": "double", "rest": 150},
+          {"ex": "db_incline_press", "sets": 3, "reps": [8, 12], "rule": "double", "rest": 120},
+          {"ex": "cable_row", "sets": 3, "reps": [8, 12], "rule": "double"},
+          {"ex": "leg_press", "sets": 3, "reps": [10, 15], "rule": "double", "rest": 120},
+          {"ex": "db_curl", "sets": 2, "reps": [10, 15], "rule": "double", "rest": 60},
+          {"ex": "triceps_pushdown", "sets": 2, "reps": [10, 15], "rule": "double", "rest": 60}
+        ]
+      }
+    ]
+  }
+]
